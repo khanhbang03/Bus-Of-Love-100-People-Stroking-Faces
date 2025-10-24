@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Bus of Love — 100 người vuốt mặt trên bus</title>
+<style>
+  html,body{height:100%;margin:0;background:#0b1220;color:#f0f6ff;font-family:Inter, monospace}
+  .wrap{display:flex;flex-direction:column;height:100%}
+  header{padding:12px 16px;background:linear-gradient(90deg,#1b3a57,#0b2a3e);display:flex;align-items:center;gap:12px}
+  h1{font-size:16px;margin:0}
+  #stage{flex:1;display:flex;align-items:center;justify-content:center;padding:12px}
+  canvas{image-rendering:pixelated;border:6px solid rgba(255,255,255,0.04);box-shadow:0 12px 40px rgba(2,6,23,0.8);max-width:1200px;width:100%;height:calc(100vh - 150px);background:linear-gradient(180deg,#ffdede07,#ffdede05)}
+  .controls{padding:10px 16px;display:flex;gap:8px;align-items:center}
+  button{background:#ffd166;border:none;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:700}
+  small{opacity:0.85}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Bus of Love</h1>
+      <small>100 người trên xe buýt vuốt mặt nhau theo kiểu yêu thương — hoạt hình nhẹ, tự động.</small>
+    </header>
+    <div id="stage">
+      <canvas id="c" width="1200" height="640"></canvas>
+    </div>
+    <div class="controls">
+      <button id="start">Bắt đầu</button>
+      <button id="pause">Tạm dừng</button>
+      <button id="reset">Đặt lại</button>
+      <button id="music">Bật/Tắt Nhạc</button>
+      <small id="status">Sẵn sàng — Nhấn Bắt đầu để xem</small>
+    </div>
+  </div>
+
+<script>
+const canvas = document.getElementById('c'); const ctx = canvas.getContext('2d'); ctx.imageSmoothingEnabled=false;
+const W = canvas.width, H = canvas.height;
+
+function rand(a,b){return Math.random()*(b-a)+a}
+
+// Bus layout: rows of seats left and right
+const rows = 10; const colsPerRow = 5; // 10*10 = 100
+const seatSpacingX = 80; const seatSpacingY = 48;
+const seatStartX = 140; const seatStartY = 120;
+
+const people = [];
+const TOTAL = 100;
+
+function createPeople(){ people.length=0;
+  let idx=0;
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<colsPerRow;c++){
+      // left side
+      if(idx<TOTAL){ people.push(makePerson(seatStartX + c*seatSpacingX, seatStartY + r*seatSpacingY)); idx++; }
+      // right side (mirror)
+      if(idx<TOTAL){ people.push(makePerson(W - (seatStartX + c*seatSpacingX), seatStartY + r*seatSpacingY)); idx++; }
+    }
+  }
+  // if overshoot, trim
+  while(people.length>TOTAL) people.pop();
+}
+
+function makePerson(x,y){ return {
+  x:x + rand(-8,8), y:y + rand(-6,6),
+  baseX:x, baseY:y,
+  handX: x + rand(-10,10), handY: y + rand(6,18), // hand position that will animate toward neighbor
+  color: `hsl(${Math.floor(rand(0,360))}deg 70% 68%)`,
+  faceColor: '#fff',
+  size: 12 + Math.floor(rand(-2,2)),
+  phase: rand(0,Math.PI*2),
+  targetIdx: null,
+  calm:false
+}; }
+
+// assign neighbors to gently stroke face — targetIdx points to neighbor index
+function assignTargets(){
+  for(let i=0;i<people.length;i++){
+    // choose a nearby seat to touch: prefer adjacent in same row
+    const p = people[i];
+    let nearest = null; let nd=1e9; for(let j=0;j<people.length;j++){ if(i===j) continue; const d = Math.hypot(people[j].x - p.x, people[j].y - p.y); if(d<nd){ nd=d; nearest=j } }
+    // 40% chance to target nearest, else random near
+    if(Math.random()<0.7) p.targetIdx = nearest; else p.targetIdx = Math.floor(rand(0,people.length));
+  }
+}
+
+// gentle music (optional)
+let audio;
+let musicOn=false;
+function toggleMusic(){ if(!audio){ audio = new Audio(); audio.src = ''; /* empty by default */ audio.loop=true; }
+  musicOn = !musicOn; if(musicOn) { try{ audio.play(); }catch(e){} } else { try{ audio.pause(); audio.currentTime=0;}catch(e){} } }
+
+// animation state
+let running=false, paused=false;
+
+function step(){ if(!running||paused) return;
+  // animate each person's hand toward their target's cheek position
+  for(let i=0;i<people.length;i++){
+    const p = people[i];
+    // small bobbing for bus motion
+    const t = Date.now()/800 + p.phase;
+    p.x = p.baseX + Math.sin(t)*3;
+    p.y = p.baseY + Math.cos(t*1.2)*1.5;
+    // if calm, reduce movement
+    if(p.calm){ p.handX += (p.baseX - p.handX) * 0.06; p.handY += (p.baseY + 10 - p.handY) * 0.06; continue; }
+    const target = people[p.targetIdx] || people[(i+1)%people.length];
+    // aim for target cheek (slightly offset)
+    const tx = target.x - (Math.sign(target.x - p.x)*6 || 6);
+    const ty = target.y + 6;
+    // move hand toward tx,ty but with soft easing
+    p.handX += (tx - p.handX) * 0.12 + rand(-0.6,0.6)*0.02;
+    p.handY += (ty - p.handY) * 0.12 + Math.sin(t + i)*0.2;
+    // occasionally switch target
+    if(Math.random() < 0.002) p.targetIdx = Math.floor(rand(0,people.length));
+  }
+}
+
+function draw(){
+  // simple bus interior background
+  ctx.clearRect(0,0,W,H);
+  // windows
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#bfe9ff'); g.addColorStop(1,'#9fd6ff'); ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // bus floor
+  ctx.fillStyle = '#e9e9e9'; ctx.fillRect(80,H-120,W-160,120);
+  // seats rows
+  for(let r=0;r<rows;r++){
+    // left seats
+    for(let c=0;c<colsPerRow;c++){
+      const sx = seatStartX + c*seatSpacingX - 10;
+      const sy = seatStartY + r*seatSpacingY - 6;
+      drawSeat(sx, sy);
+      // mirror right
+      const sx2 = W - (seatStartX + c*seatSpacingX) - 10;
+      drawSeat(sx2, sy);
+    }
+  }
+  // draw people hands first
+  for(let p of people){ drawHand(p); }
+  // draw people bodies/faces
+  for(let p of people){ drawPerson(p); }
+  // HUD
+  ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.fillRect(8,8,240,30);
+  ctx.fillStyle='#fff'; ctx.font='13px monospace'; ctx.fillText(`People showing love: ${people.length}`, 14, 28);
+}
+
+function drawSeat(x,y){ ctx.fillStyle='#6b3f2a'; roundRect(ctx,x,y,60,28,4,true); ctx.fillStyle='#402819'; ctx.fillRect(x+4,y+4,52,20); }
+
+function drawPerson(p){ // body
+  const s = p.size; ctx.fillStyle = '#222'; ctx.fillRect(p.x - s/2, p.y - s/2 + 6, s, s); // torso
+  // face
+  ctx.fillStyle = p.faceColor; ctx.fillRect(p.x - s/2, p.y - s/2 - 6, s, s);
+  // eyes
+  ctx.fillStyle = '#111'; ctx.fillRect(p.x - 3, p.y - 8, 1,1); ctx.fillRect(p.x + 2, p.y - 8, 1,1);
+  // blush when hand near
+  const nearestHandDist = Math.hypot(p.x - p.handX, p.y - p.handY);
+  if(nearestHandDist < 18){ ctx.fillStyle = 'rgba(255,100,120,0.4)'; ctx.fillRect(p.x - 3, p.y - 4, 7,3); }
+}
+
+function drawHand(p){ ctx.fillStyle = p.color; ctx.fillRect(p.handX - 4, p.handY - 4, 8,8); // small square hand
+  // gentle motion line
+  ctx.beginPath(); ctx.moveTo(p.x, p.y - 2); ctx.lineTo(p.handX, p.handY); ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth=1; ctx.stroke(); }
+
+function roundRect(ctx,x,y,w,h,r,fill){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath(); if(fill)ctx.fill();}
+
+// main loop
+let last = performance.now(); function loop(t){ const dt = t - last; last = t; for(let i=0;i<2;i++) step(); draw(); requestAnimationFrame(loop); }
+requestAnimationFrame(loop);
+
+// interactions
+createPeople(); assignTargets();
+
+document.getElementById('start').addEventListener('click', ()=>{ running=true; paused=false; document.getElementById('status').textContent='Đang yêu thương — mọi người vuốt mặt nhau.'; });
+document.getElementById('pause').addEventListener('click', ()=>{ paused = !paused; document.getElementById('status').textContent = paused? 'Tạm dừng' : (running? 'Đang yêu thương...' : 'Sẵn sàng'); });
+document.getElementById('reset').addEventListener('click', ()=>{ createPeople(); assignTargets(); running=false; paused=false; document.getElementById('status').textContent='Sẵn sàng'; });
+document.getElementById('music').addEventListener('click', ()=>{ toggleMusic(); document.getElementById('status').textContent = musicOn? 'Nhạc: Bật' : 'Nhạc: Tắt'; });
+
+// click a person to make them say "aww"
+canvas.addEventListener('click', (e)=>{
+  const rect = canvas.getBoundingClientRect(); const mx = (e.clientX - rect.left) * (canvas.width/rect.width); const my = (e.clientY - rect.top) * (canvas.height/rect.height);
+  let nearest=null, nd=1e9; for(let i=0;i<people.length;i++){ const p=people[i]; const d=Math.hypot(p.x-mx,p.y-my); if(d<nd){ nd=d; nearest=i } }
+  if(nearest!==null && nd<40){ try{ const msg=new SpeechSynthesisUtterance('Aww'); msg.lang='en-US'; speechSynthesis.speak(msg);}catch(e){} }
+});
+
+</script>
+</body>
+</html>
